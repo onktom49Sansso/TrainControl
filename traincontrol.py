@@ -198,8 +198,7 @@ def main():
           print ('Ausschalter')
           os.system("sudo shutdown -h now -P 0")						# System herunterfahren
           
-        print "test6"
-        
+
 # If run this script directly from the shell, start it:
 if __name__ == '__main__':
     try:

@@ -210,6 +210,3 @@ if __name__ == '__main__':
 
     # Cleanup
     GPIO.cleanup()
-    
-print "test7"
-

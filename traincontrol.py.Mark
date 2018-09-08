@@ -1,0 +1,214 @@
+#!/usr/bin/python
+# Importiert libraries
+import RPi.GPIO as GPIO
+import time
+import os
+
+# Klasse zur Relaissteuerung
+class Relay(object):
+   # Constructor
+   def __init__(self, pin):
+      self._verbose = True
+      self._pin = pin
+
+      # Initialize GPIO pin auf Raspberry PI
+      GPIO.setup(self._pin,GPIO.OUT, initial=GPIO.LOW)
+      self.set(False)
+
+   # Setze einen Relaiszustand: True oder False
+   def set(self, state):
+      # Setze GPIO pin des Relais auf True oder False
+      GPIO.output(self._pin, not state)      
+      self._state = state
+      if self._verbose:
+         self.printStateChange()
+
+   # Setze einen Relaiszustand (True oder False) fuer eine gebene Zeit in ms. Danach den anderen Zustand
+   # Dies wird z.B. fuer den Weichenschaltstrom benutzt
+   def setForTime(self, state, time_in_ms):
+      self.set(state)
+      time.sleep((time_in_ms*1.0) / 1000.0)
+      self.set(not state)
+
+   # Setzt das Relais auf den anderen Zustand
+   def toggle(self):
+      new_state = not self._state
+      self.set(new_state)
+
+   # Gibt die Zustandsaenderung des Relais aus
+   def printStateChange(self):
+      print('Relay %i: new state %s' % (self._pin, str(self._state)))
+
+# Definiert eine Aktion eines Relais. Eine Aktion ist ein Schalten eines Relais in einen bestimmten Zustand, z.B. 
+# Weiche beim Stellwerk auf True.
+# Der Zustand kann auch nur fuer eine festgelegt Zeit angenommen werden, z.B. Relais fuer die Weichenstromschaltung
+class RelayAction(object):
+   # Konstruktor
+   def __init__(self, relay, state, duration_in_ms = None):
+      self._relay = relay
+      self._state = state
+      self._duration_in_ms = duration_in_ms
+
+   # Fuehre die Aktion auf dem Relais aus.
+   def action(self):
+      if self._duration_in_ms is None:
+         self._relay.set(self._state)
+      else:
+         self._relay.setForTime(self._state, self._duration_in_ms)
+
+# Definiert eine Shutdown action
+class ShutdownAction(object):
+   def action(self):
+      os.system("sudo poweroff")
+         
+# Definiert einen Tasterschalter. Fuehrt eine Liste von Aktionen aus, wenn er gedrueckt wird.
+class PushButton(object):
+   # Konstrucktor 
+   def __init__(self, pin, actions):
+      self._pin = pin
+      self._actions = actions
+
+      # Initialisiert den GPIO pin auf dem Raspberry PI.
+      GPIO.setup(pin,GPIO.IN)
+
+   # Prueft, ob der Taster gedrueckt ist, und wenn ja, fuehrt die Liste der Aktionen aus.
+   def check(self):
+      is_pushed = not GPIO.input(self._pin)
+      if is_pushed:
+         print("Button %i is pushed" % self._pin)
+
+         # Fuehre mit dem Taster assozierte Aktionen aus. In der Reihenfolge der Liste.
+         for action in self._actions:
+            time.sleep(0.01) 
+            action.action()
+
+         # Warte wait_time Sekunden (debouncing)
+         wait_time = 4
+         print("Wait %i seconds" % wait_time)
+         time.sleep(wait_time)
+         print("Ready!")
+
+      return is_pushed
+
+# Initialisiere die Relais gemaess einer Liste von Aktionen
+def initialize(configuration):
+    for action in configuration:
+        action.action()
+         
+# Main function
+def main():
+
+    # Set the gpio modes to BCM numbering
+    GPIO.setmode(GPIO.BCM)
+
+    # Definiere die Relais
+    RelayWeicheUebergang = Relay(pin=5) 
+    RelayWeicheStellwerk = Relay(pin=6) 
+    RelayFahrstrom = Relay(pin=13) 
+    RelayWeichenStrom = Relay(pin=19)
+
+    RelaySignalStellwerk = Relay(pin=17)
+
+    TransistorSignal = Relay(pin=21)
+
+
+    # Definiere alle moeglichen Aktionen der Relais.
+    ActionWeicheUebergangInnen = RelayAction(RelayWeicheUebergang, True)
+    ActionWeicheStellwerkInnen = RelayAction(RelayWeicheStellwerk, False)
+
+    ActionWeicheUebergangAussen = RelayAction(RelayWeicheUebergang, False)
+    ActionWeicheStellwerkAussen = RelayAction(RelayWeicheStellwerk, True)
+
+    ActionSignalStellwerkInnenGruen = RelayAction(TransistorSignal, True)
+    ActionSignalStellwerkInnenRot = RelayAction(TransistorSignal, False)
+
+    ActionFahrstromInnen = RelayAction(RelayFahrstrom, True)
+    ActionFahrstromAussen = RelayAction(RelayFahrstrom, False)
+
+    ActionWeichenStrom = RelayAction(RelayWeichenStrom, True, duration_in_ms = 800)
+
+    ActionSignalStellwerkRot = RelayAction(RelaySignalStellwerk, True)
+    ActionSignalStellwerkGruen = RelayAction(RelaySignalStellwerk, False)
+
+    ActionRunterfahren = ShutdownAction()
+
+
+    # Definiere die moeglichen Aktionskonfigurationen.
+    # Die Reihenfolge ist wichtig.
+    ActionsInnen = [ActionWeicheUebergangInnen, 
+                    ActionWeicheStellwerkInnen,
+                    ActionFahrstromInnen,
+                    ActionSignalStellwerkGruen,
+                    ActionWeichenStrom,
+                    ]
+
+    ActionsAussen = [
+                     ActionWeicheUebergangAussen, 
+                     ActionWeicheStellwerkAussen,
+                     ActionFahrstromAussen,
+                     ActionSignalStellwerkRot,
+                     ActionWeichenStrom,
+                     ]
+
+    ActionsSignal_1_rot = [ActionSignalStellwerkRot,
+                           ActionWeichenStrom]
+
+
+    ActionsShutDown = [ActionRunterfahren]
+
+
+    # Definiere die Tasterschalter und welche Aktionen sie ausfuehren sollen.
+    SchieneInnenUebergang = PushButton(pin = 16, actions = ActionsAussen)
+    SchieneInnenStellwerk = PushButton(pin = 20, actions = ActionsAussen)
+    SchieneAussenUebergang = PushButton(pin = 12, actions = ActionsInnen)
+
+    ShutDownTaster = PushButton(pin = 26, actions = ActionsShutDown)
+
+
+    print('Program is running...')
+    print('Please press Ctrl+C to end the program...')
+
+    print("Initialize to configuration: innen")
+    initialize(ActionsInnen)
+
+    # Main loop. Das Programm verweilt nun bis zu seinem Ende in dieser loop.
+    while True:
+
+       # Teste alle Schienentasterschalter (polling)
+       # For each Schienentaster...
+       for schiene in [SchieneInnenUebergang, SchieneInnenStellwerk, SchieneAussenUebergang, ShutDownTaster]:
+           # Pruefe ob der Taster gedrueckt ist und fuehre ggfs. die assoziierten Aktionen aus
+           is_active = schiene.check()
+
+           # Fuer Geisterzug
+           # Wenn einer der inneren Schalter gedrueckt worde
+           #if is_active and (schiene is SchieneInnenUebergang or schiene is SchieneInnenStellwerk):
+           #   print("Geisterzug kommt in 10 Sekunden")  
+           #   time.sleep(10)
+           #   print("Geisterzug ist da.")
+           #   # Setze Konfiguration fuer das innere Gleis.
+           #   initialize(ActionsInnen)
+       
+           # wenn Ausfahrt ueber Weiche StellwerkInnen, Signal wieder auf Rot stellen
+           if is_active and schiene is SchieneInnenStellwerk:
+              print("Signal noch fuer 10 Sekdunden gruen")
+              time.sleep(9)
+              print("Signal jetzt nach rot")
+              # Setze Konfiguration fuer das innere Gleis.
+              initialize(ActionsSignal_1_rot)
+
+
+       # Warte etwas um die CPU nicht zu 100 prozent zu belasten
+       time.sleep(0.1)
+
+# If run this script directly from the shell, start it:
+if __name__ == '__main__':
+    try:
+        main()
+    # When 'Ctrl+C' is pressed 
+    except:
+        pass
+
+    # Cleanup
+    GPIO.cleanup()
+
